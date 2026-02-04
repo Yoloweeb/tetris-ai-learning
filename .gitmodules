@@ -1,0 +1,3 @@
+[submodule "external/python-tetris"]
+	path = external/python-tetris
+	url = https://github.com/yanyongyu/python-tetris.git
