@@ -1,7 +1,16 @@
-Goal: Train a Tetris agent using board-state representation (20×10 grid), not images.
+## Goal
+Train an AI agent to play Tetris using board-state features, not pixels.
 
-Phase 1: Imitation learning from heuristic policy.
+## Constraints
+- Use an existing Python Tetris engine (python-tetris)
+- No emulator-based environments
+- No image-based learning
+- Deterministic action space (macro placement actions)
 
-Phase 2 (optional): RL fine-tuning.
+## Phases
+1. Imitation learning from a heuristic policy
+2. Optional reinforcement learning fine-tuning
 
-Non-goals: writing a Tetris game from scratch, using emulator ROMs.
+## Non-goals
+- Writing a Tetris engine from scratch
+- Training from raw screen captures

@@ -1,10 +1,14 @@
-Define one sample as:
+## Dataset Format
 
-    board: shape (20, 10) int8 (0/1)
+Each sample consists of:
 
-    piece_current: shape (7,) one-hot
+- board: numpy array (20, 10), int8
+- current_piece: numpy array (7,), one-hot
+- next_piece: numpy array (7,), one-hot (optional)
+- action: int (macro placement action index)
 
-    piece_next: shape (7,) one-hot (optional)
-
-    action: int (index into “placement actions”)
-    Store as .npz with arrays: X_board, X_cur, X_next, y_action.
+Stored as .npz files with keys:
+- X_board
+- X_current
+- X_next
+- y_action
