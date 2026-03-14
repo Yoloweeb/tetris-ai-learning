@@ -2,7 +2,6 @@ import numpy as np
 
 from src.env.tetris_env import TetrisEnv
 
-
 def test_env_smoke():
     env = TetrisEnv()
     state = env.reset(seed=123)
