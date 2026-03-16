@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import inspect
 import sys
 from pathlib import Path
 from typing import Any
@@ -13,15 +14,6 @@ DEFAULT_EPISODES = 50
 DEFAULT_OUTPUT_PATH = "data/imitation_dataset.npz"
 DEFAULT_PROGRESS_EVERY = 5
 DEFAULT_MAX_STEPS_PER_EPISODE = 200
-
-def _load_expert_policy():
-    repo_root = Path(__file__).resolve().parents[2]
-    external_path = repo_root / "external" / "python-tetris"
-    if str(external_path) not in sys.path:
-        sys.path.insert(0, str(external_path))
-        
-    from pytetris.ai import pierre_dellacherie
-    return pierre_dellacherie
 
 
 def _add_external_path() -> Path:
@@ -38,25 +30,34 @@ def _load_expert_policy():
         raise RuntimeError(f"Missing external expert repository: {external_root}")
 
     try:
-        module = __import__(EXPERT_MODULE, fromlist=[EXPERT_FUNCTION])
+        from pytetris.ai import pierre_dellacherie
     except Exception as exc:
         raise RuntimeError(
-            f"Failed importing expert module '{EXPERT_MODULE}' from {external_root}"
+            f"Failed to import 'pierre_dellacherie' from pytetris.ai using {external_root}"
         ) from exc
 
-    policy = getattr(module, EXPERT_FUNCTION, None)
-    if not callable(policy):
-        raise RuntimeError(
-            f"Expert function '{EXPERT_FUNCTION}' is not callable in module '{EXPERT_MODULE}'"
-        )
-    return policy
+    return pierre_dellacherie
 
 
 def _extract_state(state: Any) -> tuple[np.ndarray, np.ndarray, np.ndarray] | None:
-    if not isinstance(state, tuple) or len(state) != 3:
+    board: Any = None
+    current_piece: Any = None
+    next_piece: Any = None
+
+    if isinstance(state, (tuple, list)) and len(state) == 3:
+        board, current_piece, next_piece = state
+    elif isinstance(state, dict):
+        board = state.get("board")
+        current_piece = state.get("current_piece", state.get("current"))
+        next_piece = state.get("next_piece", state.get("next"))
+    else:
+        board = getattr(state, "board", None)
+        current_piece = getattr(state, "current_piece", getattr(state, "current", None))
+        next_piece = getattr(state, "next_piece", getattr(state, "next", None))
+
+    if board is None or current_piece is None or next_piece is None:
         return None
 
-    board, current_piece, next_piece = state
     board_arr = np.asarray(board, dtype=np.int8)
     current_arr = np.asarray(current_piece, dtype=np.int8)
     next_arr = np.asarray(next_piece, dtype=np.int8)
@@ -71,27 +72,121 @@ def _extract_state(state: Any) -> tuple[np.ndarray, np.ndarray, np.ndarray] | No
     return board_arr, current_arr, next_arr
 
 
-def _map_expert_action_to_valid(
-    env: TetrisEnv, state: tuple[np.ndarray, np.ndarray, np.ndarray], expert_action: Any
-) -> int | None:
-    valid_actions = env.get_valid_actions(state)
-    valid_set = {int(a) for a in valid_actions}
+def _call_expert_policy(
+    expert_policy: Any,
+    state: Any,
+    board: np.ndarray,
+    current_piece: np.ndarray,
+    next_piece: np.ndarray,
+    valid_actions: list[int],
+) -> Any:
+    signature = inspect.signature(expert_policy)
+    params = list(signature.parameters.values())
+
+    named_candidates: dict[str, Any] = {
+        "state": state,
+        "observation": state,
+        "game_state": state,
+        "board": board,
+        "current_piece": current_piece,
+        "current": current_piece,
+        "piece": current_piece,
+        "next_piece": next_piece,
+        "next": next_piece,
+        "valid_actions": valid_actions,
+        "actions": valid_actions,
+        "legal_actions": valid_actions,
+    }
+
+    kwargs: dict[str, Any] = {}
+    for p in params:
+        if p.kind not in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY):
+            continue
+        if p.name in named_candidates:
+            kwargs[p.name] = named_candidates[p.name]
+
+    required_unmatched = [
+        p
+        for p in params
+        if p.default is inspect._empty
+        and p.kind in (
+            inspect.Parameter.POSITIONAL_ONLY,
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            inspect.Parameter.KEYWORD_ONLY,
+        )
+        and p.name not in kwargs
+    ]
+
+    if not required_unmatched:
+        return expert_policy(**kwargs)
+
+    positional_candidates = [state, board, current_piece, next_piece, valid_actions]
+    args: list[Any] = []
+    for p in params:
+        if p.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD):
+            if p.name in kwargs:
+                args.append(kwargs[p.name])
+            elif positional_candidates:
+                args.append(positional_candidates.pop(0))
+            elif p.default is inspect._empty:
+                raise TypeError(f"Cannot satisfy required expert argument: {p.name}")
+        elif p.kind is inspect.Parameter.VAR_POSITIONAL:
+            args.extend(positional_candidates)
+            positional_candidates = []
+
+    keyword_only = {
+        p.name: kwargs[p.name]
+        for p in params
+        if p.kind is inspect.Parameter.KEYWORD_ONLY and p.name in kwargs
+    }
+    return expert_policy(*args, **keyword_only)
+
+
+def _map_expert_action_to_valid(env: TetrisEnv, state: Any, expert_action: Any) -> int | None:
+    valid_actions = [int(a) for a in env.get_valid_actions(state)]
+    if not valid_actions:
+        return None
+    valid_set = set(valid_actions)
 
     if isinstance(expert_action, (int, np.integer)):
         action = int(expert_action)
-        return action if action in valid_set else None
+        if action in valid_set:
+            return action
+        if 0 <= action < len(valid_actions):
+            return valid_actions[action]
+        return None
 
-    if isinstance(expert_action, tuple) and len(expert_action) == 2:
-        try:
-            expert_rotation = int(expert_action[0])
-            expert_target_x = int(expert_action[1])
-        except (TypeError, ValueError):
-            return None
+    if isinstance(expert_action, dict):
+        for key in ("action", "best_action", "move", "best_move"):
+            if key in expert_action:
+                return _map_expert_action_to_valid(env, state, expert_action[key])
 
-        for candidate in valid_actions:
-            rotation, target_x = env._parse_action(candidate)
-            if rotation == expert_rotation and target_x == expert_target_x:
-                return int(candidate)
+    if isinstance(expert_action, np.ndarray):
+        if expert_action.ndim == 0:
+            return _map_expert_action_to_valid(env, state, expert_action.item())
+        expert_action = expert_action.tolist()
+
+    if isinstance(expert_action, (list, tuple)):
+        if len(expert_action) == 1:
+            return _map_expert_action_to_valid(env, state, expert_action[0])
+        if len(expert_action) >= 2:
+            try:
+                expert_rotation = int(expert_action[0])
+                expert_target_x = int(expert_action[1])
+            except (TypeError, ValueError):
+                return None
+
+            for candidate in valid_actions:
+                rotation, target_x = env._parse_action(candidate)
+                if rotation == expert_rotation and target_x == expert_target_x:
+                    return candidate
+
+    if hasattr(expert_action, "rotation") and hasattr(expert_action, "x"):
+        return _map_expert_action_to_valid(
+            env,
+            state,
+            (getattr(expert_action, "rotation"), getattr(expert_action, "x")),
+        )
 
     return None
 
@@ -128,7 +223,14 @@ def collect_dataset(
                 break
 
             try:
-                expert_action = expert_policy(state=state, valid_actions=valid_actions)
+                expert_action = _call_expert_policy(
+                    expert_policy=expert_policy,
+                    state=state,
+                    board=board,
+                    current_piece=current_piece,
+                    next_piece=next_piece,
+                    valid_actions=valid_actions,
+                )
             except Exception:
                 skipped_invalid_expert_actions += 1
                 fallback = int(valid_actions[0])
