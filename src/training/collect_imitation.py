@@ -14,10 +14,14 @@ DEFAULT_OUTPUT_PATH = "data/imitation_dataset.npz"
 DEFAULT_PROGRESS_EVERY = 5
 DEFAULT_MAX_STEPS_PER_EPISODE = 200
 
-# Hardwired expert entrypoint from external/python-tetris.
-# The external package must expose this exact module/function.
-EXPERT_MODULE = "tetris.heuristic"
-EXPERT_FUNCTION = "choose_action"
+def _load_expert_policy():
+    repo_root = Path(__file__).resolve().parents[2]
+    external_path = repo_root / "external" / "python-tetris"
+    if str(external_path) not in sys.path:
+        sys.path.insert(0, str(external_path))
+        
+    from pytetris.ai import pierre_dellacherie
+    return pierre_dellacherie
 
 
 def _add_external_path() -> Path:
