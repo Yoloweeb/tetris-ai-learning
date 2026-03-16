@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import inspect
 import sys
 from pathlib import Path
 from typing import Any
@@ -72,121 +71,132 @@ def _extract_state(state: Any) -> tuple[np.ndarray, np.ndarray, np.ndarray] | No
     return board_arr, current_arr, next_arr
 
 
-def _call_expert_policy(
-    expert_policy: Any,
-    state: Any,
-    board: np.ndarray,
-    current_piece: np.ndarray,
-    next_piece: np.ndarray,
-    valid_actions: list[int],
-) -> Any:
-    signature = inspect.signature(expert_policy)
-    params = list(signature.parameters.values())
+def _get_attr(obj: Any, names: tuple[str, ...]) -> Any:
+    for name in names:
+        if hasattr(obj, name):
+            value = getattr(obj, name)
+            if value is not None:
+                return value
+    return None
 
-    named_candidates: dict[str, Any] = {
-        "state": state,
-        "observation": state,
-        "game_state": state,
-        "board": board,
-        "current_piece": current_piece,
-        "current": current_piece,
-        "piece": current_piece,
-        "next_piece": next_piece,
-        "next": next_piece,
-        "valid_actions": valid_actions,
-        "actions": valid_actions,
-        "legal_actions": valid_actions,
-    }
 
-    kwargs: dict[str, Any] = {}
-    for p in params:
-        if p.kind not in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY):
-            continue
-        if p.name in named_candidates:
-            kwargs[p.name] = named_candidates[p.name]
+def _extract_rotations(piece_obj: Any) -> Any:
+    if piece_obj is None:
+        return None
+    if isinstance(piece_obj, (list, tuple)) and piece_obj:
+        return piece_obj
+    return _get_attr(
+        piece_obj,
+        (
+            "rotations",
+            "rotation_matrices",
+            "matrices",
+            "states",
+            "all_rotations",
+        ),
+    )
 
-    required_unmatched = [
-        p
-        for p in params
-        if p.default is inspect._empty
-        and p.kind in (
-            inspect.Parameter.POSITIONAL_ONLY,
-            inspect.Parameter.POSITIONAL_OR_KEYWORD,
-            inspect.Parameter.KEYWORD_ONLY,
+
+def _extract_expert_inputs(env: TetrisEnv) -> tuple[Any, Any] | None:
+    game_obj = _get_attr(env, ("_game", "game", "_engine", "engine"))
+
+    matrix = None
+    current_piece_obj = None
+    if game_obj is not None:
+        matrix = _get_attr(game_obj, ("matrix", "_matrix", "board", "_board"))
+        current_piece_obj = _get_attr(
+            game_obj,
+            (
+                "current_tetromino",
+                "tetromino",
+                "current_piece",
+                "piece",
+                "_current_piece",
+            ),
         )
-        and p.name not in kwargs
-    ]
 
-    if not required_unmatched:
-        return expert_policy(**kwargs)
+    if matrix is None:
+        matrix = _get_attr(env, ("_matrix", "matrix", "game_matrix", "_board", "board"))
 
-    positional_candidates = [state, board, current_piece, next_piece, valid_actions]
-    args: list[Any] = []
-    for p in params:
-        if p.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD):
-            if p.name in kwargs:
-                args.append(kwargs[p.name])
-            elif positional_candidates:
-                args.append(positional_candidates.pop(0))
-            elif p.default is inspect._empty:
-                raise TypeError(f"Cannot satisfy required expert argument: {p.name}")
-        elif p.kind is inspect.Parameter.VAR_POSITIONAL:
-            args.extend(positional_candidates)
-            positional_candidates = []
+    if current_piece_obj is None:
+        current_piece_obj = _get_attr(
+            env,
+            (
+                "_current_tetromino",
+                "current_tetromino",
+                "_piece",
+                "piece",
+                "_current_piece_obj",
+            ),
+        )
 
-    keyword_only = {
-        p.name: kwargs[p.name]
-        for p in params
-        if p.kind is inspect.Parameter.KEYWORD_ONLY and p.name in kwargs
-    }
-    return expert_policy(*args, **keyword_only)
+    rotations = _extract_rotations(current_piece_obj)
+
+    if matrix is None or rotations is None:
+        return None
+
+    return matrix, rotations
 
 
-def _map_expert_action_to_valid(env: TetrisEnv, state: Any, expert_action: Any) -> int | None:
+def _extract_rotation_x(expert_result: Any) -> tuple[int, int] | None:
+    if isinstance(expert_result, dict):
+        if "rotation" in expert_result and (
+            "x" in expert_result or "target_x" in expert_result or "column" in expert_result
+        ):
+            x_val = expert_result.get("x", expert_result.get("target_x", expert_result.get("column")))
+            return int(expert_result["rotation"]), int(x_val)
+        if "rotation_index" in expert_result and (
+            "x" in expert_result or "target_x" in expert_result or "column" in expert_result
+        ):
+            x_val = expert_result.get("x", expert_result.get("target_x", expert_result.get("column")))
+            return int(expert_result["rotation_index"]), int(x_val)
+        for nested_key in ("placement", "best", "move", "result"):
+            if nested_key in expert_result:
+                nested = _extract_rotation_x(expert_result[nested_key])
+                if nested is not None:
+                    return nested
+
+    if isinstance(expert_result, (tuple, list)) and len(expert_result) >= 2:
+        try:
+            return int(expert_result[0]), int(expert_result[1])
+        except (TypeError, ValueError):
+            return None
+
+    rot = _get_attr(expert_result, ("rotation", "rotation_index", "rot"))
+    x_val = _get_attr(expert_result, ("x", "target_x", "column"))
+    if rot is not None and x_val is not None:
+        try:
+            return int(rot), int(x_val)
+        except (TypeError, ValueError):
+            return None
+
+    return None
+
+
+def _map_expert_result_to_valid(env: TetrisEnv, state: Any, expert_result: Any) -> int | None:
     valid_actions = [int(a) for a in env.get_valid_actions(state)]
     if not valid_actions:
         return None
     valid_set = set(valid_actions)
 
-    if isinstance(expert_action, (int, np.integer)):
-        action = int(expert_action)
+    if isinstance(expert_result, (int, np.integer)):
+        action = int(expert_result)
         if action in valid_set:
             return action
-        if 0 <= action < len(valid_actions):
-            return valid_actions[action]
+
+    parsed = _extract_rotation_x(expert_result)
+    if parsed is None:
         return None
 
-    if isinstance(expert_action, dict):
-        for key in ("action", "best_action", "move", "best_move"):
-            if key in expert_action:
-                return _map_expert_action_to_valid(env, state, expert_action[key])
-
-    if isinstance(expert_action, np.ndarray):
-        if expert_action.ndim == 0:
-            return _map_expert_action_to_valid(env, state, expert_action.item())
-        expert_action = expert_action.tolist()
-
-    if isinstance(expert_action, (list, tuple)):
-        if len(expert_action) == 1:
-            return _map_expert_action_to_valid(env, state, expert_action[0])
-        if len(expert_action) >= 2:
+    if hasattr(env, "_parse_action"):
+        target_rotation, target_x = parsed
+        for action in valid_actions:
             try:
-                expert_rotation = int(expert_action[0])
-                expert_target_x = int(expert_action[1])
-            except (TypeError, ValueError):
-                return None
-
-            for candidate in valid_actions:
-                rotation, target_x = env._parse_action(candidate)
-                if rotation == expert_rotation and target_x == expert_target_x:
-                    return candidate
-
-    if hasattr(expert_action, "rotation") and hasattr(expert_action, "x"):
-        return _map_expert_action_to_valid(
-            env,
-            state,
-            (getattr(expert_action, "rotation"), getattr(expert_action, "x")),
-        )
+                rotation, x_pos = env._parse_action(action)
+            except Exception:
+                continue
+            if int(rotation) == target_rotation and int(x_pos) == target_x:
+                return int(action)
 
     return None
 
@@ -206,7 +216,8 @@ def collect_dataset(
     y_action: list[int] = []
 
     skipped_invalid_states = 0
-    skipped_invalid_expert_actions = 0
+    skipped_missing_expert_inputs = 0
+    skipped_invalid_expert_results = 0
 
     for episode_idx in range(episodes):
         state = env.reset(seed=episode_idx)
@@ -218,31 +229,44 @@ def collect_dataset(
                 break
 
             board, current_piece, next_piece = parsed_state
-            valid_actions = env.get_valid_actions(state)
+            valid_actions = [int(a) for a in env.get_valid_actions(state)]
             if not valid_actions:
                 break
 
-            try:
-                expert_action = _call_expert_policy(
-                    expert_policy=expert_policy,
-                    state=state,
-                    board=board,
-                    current_piece=current_piece,
-                    next_piece=next_piece,
-                    valid_actions=valid_actions,
-                )
-            except Exception:
-                skipped_invalid_expert_actions += 1
-                fallback = int(valid_actions[0])
+            expert_inputs = _extract_expert_inputs(env)
+            if expert_inputs is None:
+                skipped_missing_expert_inputs += 1
+                fallback = valid_actions[0]
                 state, _, done, _ = env.step(fallback)
                 if done:
                     break
                 continue
 
-            action = _map_expert_action_to_valid(env, state, expert_action)
+            raw_matrix, current_rotations = expert_inputs
+
+            try:
+                results = expert_policy(raw_matrix, current_rotations)
+            except Exception:
+                skipped_invalid_expert_results += 1
+                fallback = valid_actions[0]
+                state, _, done, _ = env.step(fallback)
+                if done:
+                    break
+                continue
+
+            if not isinstance(results, (list, tuple)) or len(results) == 0:
+                skipped_invalid_expert_results += 1
+                fallback = valid_actions[0]
+                state, _, done, _ = env.step(fallback)
+                if done:
+                    break
+                continue
+
+            expert_best_result = results[0]
+            action = _map_expert_result_to_valid(env, state, expert_best_result)
             if action is None:
-                skipped_invalid_expert_actions += 1
-                fallback = int(valid_actions[0])
+                skipped_invalid_expert_results += 1
+                fallback = valid_actions[0]
                 state, _, done, _ = env.step(fallback)
                 if done:
                     break
@@ -261,8 +285,9 @@ def collect_dataset(
             print(
                 f"Progress: episode {episode_idx + 1}/{episodes}, "
                 f"samples={len(y_action)}, "
-                f"skipped_states={skipped_invalid_states}, "
-                f"skipped_expert_actions={skipped_invalid_expert_actions}"
+                f"skipped_invalid_states={skipped_invalid_states}, "
+                f"skipped_missing_expert_inputs={skipped_missing_expert_inputs}, "
+                f"skipped_invalid_expert_results={skipped_invalid_expert_results}"
             )
 
     if x_board:
@@ -284,7 +309,8 @@ def collect_dataset(
     print(f"episodes: {episodes}")
     print(f"collected_samples: {arr_action.shape[0]}")
     print(f"skipped_invalid_states: {skipped_invalid_states}")
-    print(f"skipped_invalid_expert_actions: {skipped_invalid_expert_actions}")
+    print(f"skipped_missing_expert_inputs: {skipped_missing_expert_inputs}")
+    print(f"skipped_invalid_expert_results: {skipped_invalid_expert_results}")
     print(f"X_board: {arr_board.shape}, dtype={arr_board.dtype}")
     print(f"X_current: {arr_current.shape}, dtype={arr_current.dtype}")
     print(f"X_next: {arr_next.shape}, dtype={arr_next.dtype}")
