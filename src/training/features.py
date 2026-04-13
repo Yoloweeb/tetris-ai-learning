@@ -18,12 +18,12 @@ def make_feature_vector(simulated_state: dict[str, Any], feature_dict: dict[str,
     next_piece = piece_to_one_hot(int(simulated_state["next_piece"]))
     scalar_features = np.array(
         [
-            feature_dict["max_height"],
-            feature_dict["aggregate_height"],
-            feature_dict["holes"],
-            feature_dict["bumpiness"],
-            feature_dict["completed_lines"],
-            feature_dict["well_sum"],
+            feature_dict["max_height"] / 20.0,
+            feature_dict["aggregate_height"] / 200.0,
+            feature_dict["holes"] / 200.0,
+            feature_dict["bumpiness"] / 100.0,
+            feature_dict["completed_lines"] / 4.0,
+            feature_dict["well_sum"] / 100.0,
         ],
         dtype=np.float32,
     )

@@ -95,6 +95,7 @@ def main() -> None:
     lines_history: list[int] = []
 
     best_avg10_reward = float("-inf")
+    best_avg10_lines = float("-inf")
     best_episode_stats: dict[str, float | int | str] = {}
 
     model_dir = Path("models")
@@ -176,6 +177,10 @@ def main() -> None:
                 "avg10_lines": avg10_lines,
                 "end_reason": end_reason,
             }
+
+        if avg10_lines > best_avg10_lines:
+            best_avg10_lines = avg10_lines
+            model.save(model_dir / "tetris_value_best_lines.keras")
 
         print(
             f"Episode {episode}/{episodes} | reward={total_reward:.2f} | epsilon={epsilon:.3f} "

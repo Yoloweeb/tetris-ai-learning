@@ -131,7 +131,7 @@ class TetrisEnv:
             "board": binary_board,
             "board_raw": board_copy,
             "current_piece": int(self._next_piece),
-            "next_piece": int(self._next_piece),
+            "next_piece": int(self._sample_hypothetical_next_piece()),
         }
         return simulated_state, features
 
@@ -244,3 +244,9 @@ class TetrisEnv:
             depth = max(0, int(min_neighbor - heights[col]))
             total += depth
         return int(total)
+
+    def _sample_hypothetical_next_piece(self) -> int:
+        bit_generator = np.random.PCG64()
+        bit_generator.state = self._rng.bit_generator.state
+        hypothetical_rng = np.random.Generator(bit_generator)
+        return int(hypothetical_rng.integers(0, 7))
