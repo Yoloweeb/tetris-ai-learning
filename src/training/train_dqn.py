@@ -97,7 +97,7 @@ def main() -> None:
     np.random.seed(seed)
     tf.random.set_seed(seed)
 
-    episodes = 200
+    episodes = 1000
     batch_size = 32
     gamma = 0.99
     epsilon = 1.0
@@ -113,6 +113,7 @@ def main() -> None:
 
     replay_buffer: deque[ReplayTransition] = deque(maxlen=10_000)
     reward_history: list[float] = []
+    best_avg_reward_last_10 = float("-inf")
 
     model_dir = Path("models")
     model_dir.mkdir(parents=True, exist_ok=True)
@@ -125,6 +126,9 @@ def main() -> None:
         total_reward = 0.0
         steps_survived = 0
         total_lines_cleared = 0
+        episode_max_height = 0
+        episode_holes = 0
+        episode_bumpiness = 0
         ended_by_step_cap = False
 
         while not done and steps_survived < max_steps_per_episode:
@@ -154,6 +158,9 @@ def main() -> None:
             total_reward += float(reward)
             steps_survived += 1
             total_lines_cleared += int(info.get("lines_cleared", 0))
+            episode_max_height = int(info.get("max_height", episode_max_height))
+            episode_holes = int(info.get("holes", episode_holes))
+            episode_bumpiness = int(info.get("bumpiness", episode_bumpiness))
 
         if not done and steps_survived >= max_steps_per_episode:
             ended_by_step_cap = True
@@ -169,10 +176,15 @@ def main() -> None:
         if episode % 25 == 0:
             model.save(model_dir / "tetris_dqn_latest.keras")
 
+        if avg_reward_last_10 > best_avg_reward_last_10:
+            best_avg_reward_last_10 = avg_reward_last_10
+            model.save(model_dir / "tetris_dqn_best.keras")
+
         end_reason = "step_cap" if ended_by_step_cap else "natural"
         print(
             f"Episode {episode}/{episodes} | reward={total_reward:.2f} | epsilon={epsilon:.3f} "
-            f"| steps={steps_survived} | lines={total_lines_cleared} | avg10={avg_reward_last_10:.2f} | end={end_reason}"
+            f"| steps={steps_survived} | lines={total_lines_cleared} | max_height={episode_max_height} "
+            f"| holes={episode_holes} | bumpiness={episode_bumpiness} | avg10={avg_reward_last_10:.2f} | end={end_reason}"
         )
 
     model.save(model_dir / "tetris_dqn.keras")
