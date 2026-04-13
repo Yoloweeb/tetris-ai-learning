@@ -6,7 +6,6 @@ from typing import Any
 import numpy as np
 
 
-# 7 tetrominoes in standard Tetris order: I, O, T, S, Z, J, L
 BASE_TETROMINOES: dict[int, np.ndarray] = {
     0: np.array([[1, 1, 1, 1]], dtype=np.int8),
     1: np.array([[1, 1], [1, 1]], dtype=np.int8),
@@ -40,8 +39,7 @@ class TetrisEnv:
     def reset(self, seed: int | None = None) -> dict[str, Any]:
         if seed is not None:
             self._rng = np.random.default_rng(seed)
-
-        self._board.fill(0)
+        self._board = np.zeros((self.board_height, self.board_width), dtype=np.int8)
         self._current_piece = int(self._rng.integers(0, 7))
         self._next_piece = int(self._rng.integers(0, 7))
         self._done = False
@@ -49,78 +47,108 @@ class TetrisEnv:
 
     def step(self, action: int) -> tuple[dict[str, Any], float, bool, dict[str, Any]]:
         if self._done:
-            return self._get_state(), -10.0, True, {"reason": "game_over"}
+            return self._get_state(), -10.0, True, {"reason": "game_over", "lines_cleared": 0}
 
         rotation = int(action) // self.board_width
         x = int(action) % self.board_width
 
-        shape = self._get_rotated_shape(self._current_piece, rotation)
+        shape = self._get_shape_from_action_rotation(self._current_piece, rotation)
         drop_y = self._find_drop_position(self._board, shape, x)
 
         if drop_y is None:
             self._done = True
+            max_height = self._max_height(self._board)
+            holes = self._count_holes(self._board)
+            bumpiness = self._compute_bumpiness(self._column_heights(self._board))
             return self._get_state(), -10.0, True, {
-                "lines_cleared": 0,
+                "reason": "invalid_action",
                 "rotation": rotation,
                 "x": x,
-                "reason": "invalid_action",
+                "lines_cleared": 0,
+                "max_height": max_height,
+                "holes": holes,
+                "bumpiness": bumpiness,
             }
 
-        before = self._board.copy()
         self._place_shape(self._board, shape, drop_y, x, self._current_piece + 1)
         lines_cleared = self._clear_lines(self._board)
+        heights = self._column_heights(self._board)
+        max_height = self._max_height(self._board)
+        holes = self._count_holes(self._board)
+        bumpiness = self._compute_bumpiness(heights)
 
         self._current_piece = self._next_piece
         self._next_piece = int(self._rng.integers(0, 7))
 
-        reached_top = bool(np.any(self._board[0] > 0))
-        self._done = reached_top
+        self._done = bool(np.any(self._board[0] > 0))
 
-        reward = float(lines_cleared**2)
-        if np.array_equal(before, self._board):
-            reward -= 0.1
+        reward = 0.0
+        reward += float(lines_cleared**2)
+        reward += 0.1
+        reward -= 0.02 * float(max_height)
+        reward -= 0.05 * float(holes)
+        reward -= 0.01 * float(bumpiness)
         if self._done:
             reward -= 10.0
 
-        info = {
-            "lines_cleared": lines_cleared,
+        return self._get_state(), reward, self._done, {
             "rotation": rotation,
             "x": x,
-            "reached_top": reached_top,
+            "lines_cleared": lines_cleared,
+            "max_height": max_height,
+            "holes": holes,
+            "bumpiness": bumpiness,
         }
-        return self._get_state(), reward, self._done, info
 
     def get_valid_actions(self) -> list[int]:
         if self._done:
             return []
+        return self.get_valid_actions_from_state(self._board, self._current_piece)
 
-        valid: list[int] = []
-        for rotation in range(4):
-            shape = self._get_rotated_shape(self._current_piece, rotation)
+    def get_valid_actions_from_state(self, board: np.ndarray, current_piece: int) -> list[int]:
+        board_int = np.asarray(board, dtype=np.int8)
+        valid_actions: list[int] = []
+        unique_rotations = self._get_unique_rotations(current_piece)
+
+        for rotation in range(min(4, len(unique_rotations))):
+            shape = unique_rotations[rotation]
             for x in range(self.board_width):
-                if self._find_drop_position(self._board, shape, x) is not None:
-                    valid.append(rotation * self.board_width + x)
-        return valid
+                if self._find_drop_position(board_int, shape, x) is not None:
+                    valid_actions.append(rotation * self.board_width + x)
+        return valid_actions
 
     def _get_state(self) -> dict[str, Any]:
         return {
-            "board": self._board.copy(),
+            "board": (self._board > 0).astype(np.int8),
             "current_piece": self._current_piece,
             "next_piece": self._next_piece,
         }
 
-    def _get_rotated_shape(self, piece: int, rotation: int) -> np.ndarray:
-        shape = BASE_TETROMINOES[int(piece)]
-        return np.rot90(shape, k=rotation % 4).astype(np.int8)
+    def _get_unique_rotations(self, piece: int) -> list[np.ndarray]:
+        base_shape = BASE_TETROMINOES[int(piece)]
+        unique: list[np.ndarray] = []
+        seen: set[bytes] = set()
+
+        for rotation in range(4):
+            shape = np.rot90(base_shape, k=rotation % 4).astype(np.int8)
+            key = shape.tobytes()
+            if key not in seen:
+                seen.add(key)
+                unique.append(shape)
+        return unique
+
+    def _get_shape_from_action_rotation(self, piece: int, rotation: int) -> np.ndarray:
+        unique_rotations = self._get_unique_rotations(piece)
+        index = int(rotation) % len(unique_rotations)
+        return unique_rotations[index]
 
     def _find_drop_position(self, board: np.ndarray, shape: np.ndarray, x: int) -> int | None:
         shape_h, shape_w = shape.shape
-        if x < 0 or (x + shape_w) > self.board_width:
+        if x < 0 or x + shape_w > self.board_width:
             return None
 
         last_valid_y: int | None = None
-        max_y = self.board_height - shape_h
-        for y in range(max_y + 1):
+        for y in range(self.board_height - shape_h + 1):
             if self._collides(board, shape, y, x):
                 break
             last_valid_y = y
@@ -128,26 +156,53 @@ class TetrisEnv:
 
     def _collides(self, board: np.ndarray, shape: np.ndarray, y: int, x: int) -> bool:
         shape_h, shape_w = shape.shape
-        if y < 0 or x < 0 or (y + shape_h) > self.board_height or (x + shape_w) > self.board_width:
+        if y < 0 or x < 0 or y + shape_h > self.board_height or x + shape_w > self.board_width:
             return True
-
-        board_window = board[y : y + shape_h, x : x + shape_w]
-        return bool(np.any((shape > 0) & (board_window > 0)))
+        board_slice = board[y : y + shape_h, x : x + shape_w]
+        return bool(np.any((shape > 0) & (board_slice > 0)))
 
     def _place_shape(self, board: np.ndarray, shape: np.ndarray, y: int, x: int, value: int) -> None:
         shape_h, shape_w = shape.shape
-        window = board[y : y + shape_h, x : x + shape_w]
-        window[shape > 0] = value
+        board_slice = board[y : y + shape_h, x : x + shape_w]
+        board_slice[shape > 0] = value
 
     def _clear_lines(self, board: np.ndarray) -> int:
-        full_rows = np.where(np.all(board > 0, axis=1))[0]
-        lines_cleared = int(full_rows.size)
+        full_rows_mask = np.all(board > 0, axis=1)
+        lines_cleared = int(np.sum(full_rows_mask))
         if lines_cleared == 0:
             return 0
 
-        remaining = np.delete(board, full_rows, axis=0)
+        remaining_rows = board[~full_rows_mask]
         new_rows = np.zeros((lines_cleared, self.board_width), dtype=np.int8)
-        new_board = np.vstack([new_rows, remaining])
-
-        board[:] = new_board
+        rebuilt = np.vstack((new_rows, remaining_rows))
+        board[:, :] = rebuilt[: self.board_height, : self.board_width]
         return lines_cleared
+
+    def _column_heights(self, board: np.ndarray) -> np.ndarray:
+        heights = np.zeros(self.board_width, dtype=np.int32)
+        for col in range(self.board_width):
+            filled_rows = np.where(board[:, col] > 0)[0]
+            if filled_rows.size > 0:
+                heights[col] = self.board_height - int(filled_rows[0])
+        return heights
+
+    def _compute_bumpiness(self, heights: np.ndarray) -> int:
+        if heights.size <= 1:
+            return 0
+        diffs = np.abs(np.diff(heights))
+        return int(np.sum(diffs))
+
+    def _max_height(self, board: np.ndarray) -> int:
+        heights = self._column_heights(board)
+        return int(np.max(heights)) if heights.size > 0 else 0
+
+    def _count_holes(self, board: np.ndarray) -> int:
+        holes = 0
+        for col in range(self.board_width):
+            column = board[:, col]
+            filled_rows = np.where(column > 0)[0]
+            if filled_rows.size == 0:
+                continue
+            top = int(filled_rows[0])
+            holes += int(np.sum(column[top:] == 0))
+        return holes
