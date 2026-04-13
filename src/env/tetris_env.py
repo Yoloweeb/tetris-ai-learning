@@ -82,12 +82,21 @@ class TetrisEnv:
 
         self._done = bool(np.any(self._board[0] > 0))
 
-        reward = 0.0
-        reward += float(lines_cleared**2)
-        reward += 0.1
-        reward -= 0.02 * float(max_height)
-        reward -= 0.05 * float(holes)
-        reward -= 0.01 * float(bumpiness)
+        line_clear_reward = 0.0
+        if lines_cleared == 1:
+            line_clear_reward = 10.0
+        elif lines_cleared == 2:
+            line_clear_reward = 25.0
+        elif lines_cleared == 3:
+            line_clear_reward = 45.0
+        elif lines_cleared >= 4:
+            line_clear_reward = 80.0
+
+        reward = line_clear_reward
+        reward += 0.05
+        reward -= 0.01 * float(max_height)
+        reward -= 0.02 * float(holes)
+        reward -= 0.005 * float(bumpiness)
         if self._done:
             reward -= 10.0
 
