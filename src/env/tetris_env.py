@@ -145,7 +145,9 @@ class TetrisEnv:
         if lines_cleared == 0:
             return 0
 
-        board[:] = np.delete(board, full_rows, axis=0)
+        remaining = np.delete(board, full_rows, axis=0)
         new_rows = np.zeros((lines_cleared, self.board_width), dtype=np.int8)
-        board[:] = np.vstack([new_rows, board])
+        new_board = np.vstack([new_rows, remaining])
+
+        board[:] = new_board
         return lines_cleared

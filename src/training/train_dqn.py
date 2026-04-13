@@ -48,7 +48,7 @@ def train_batch(model, replay_buffer: deque, batch_size: int, gamma: float) -> N
 
 
 def main() -> None:
-    episodes = 200
+    episodes = 20
     batch_size = 32
     gamma = 0.99
 
