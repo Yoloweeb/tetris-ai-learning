@@ -6,30 +6,41 @@ import numpy as np
 from tensorflow import keras
 
 from src.env.tetris_env import TetrisEnv
-from src.training.state_utils import preprocess_state
+from src.training.features import make_feature_vector
 
 
 def board_to_text(board: np.ndarray) -> str:
     return "\n".join("".join("#" if cell > 0 else "." for cell in row) for row in board)
 
 
-def choose_greedy_action(model: keras.Model, state: dict[str, object], valid_actions: list[int]) -> int:
+def choose_greedy_action(model: keras.Model, env: TetrisEnv, valid_actions: list[int]) -> tuple[int, float]:
     if not valid_actions:
-        return 0
+        return 0, 0.0
 
-    board, current_piece, next_piece = preprocess_state(state)
-    q_values = model.predict(
-        [board[np.newaxis, ...], current_piece[np.newaxis, ...], next_piece[np.newaxis, ...]], verbose=0
-    )[0]
-    masked_q_values = np.full_like(q_values, -1e9, dtype=np.float32)
-    masked_q_values[valid_actions] = q_values[valid_actions]
-    return int(np.argmax(masked_q_values))
+    candidate_actions: list[int] = []
+    feature_vectors: list[np.ndarray] = []
+
+    for action in valid_actions:
+        simulation = env.simulate_action(action)
+        if simulation is None:
+            continue
+        simulated_state, feature_dict = simulation
+        feature_vectors.append(make_feature_vector(simulated_state, feature_dict))
+        candidate_actions.append(int(action))
+
+    if not candidate_actions:
+        return 0, 0.0
+
+    features = np.array(feature_vectors, dtype=np.float32)
+    values = model.predict(features, verbose=0).reshape(-1)
+    best_idx = int(np.argmax(values))
+    return candidate_actions[best_idx], float(values[best_idx])
 
 
 def main() -> None:
-    model_path = Path("models/tetris_dqn.keras")
+    model_path = Path("models/tetris_value_best.keras")
     if not model_path.exists():
-        raise FileNotFoundError("models/tetris_dqn.keras not found")
+        raise FileNotFoundError("models/tetris_value_best.keras not found")
 
     model = keras.models.load_model(model_path)
     env = TetrisEnv(seed=123)
@@ -39,14 +50,15 @@ def main() -> None:
 
     while not done:
         valid_actions = env.get_valid_actions()
-        action = choose_greedy_action(model, state, valid_actions)
-        next_state, reward, done, info = env.step(action)
+        action, predicted_value = choose_greedy_action(model, env, valid_actions)
+        state, reward, done, info = env.step(action)
+
         print(
-            f"action={action} reward={reward:.2f} lines_cleared={info.get('lines_cleared', 0)} done={done}"
+            f"chosen_action={action} predicted_value={predicted_value:.4f} "
+            f"reward={reward:.3f} lines_cleared={int(info.get('lines_cleared', 0))} done={done}"
         )
-        print(board_to_text(next_state["board"]))
+        print(board_to_text(np.asarray(state["board"], dtype=np.int8)))
         print("-" * 20)
-        state = next_state
 
 
 if __name__ == "__main__":
