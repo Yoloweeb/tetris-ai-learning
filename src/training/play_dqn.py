@@ -40,11 +40,14 @@ def choose_greedy_action(model: keras.Model, env: TetrisEnv, valid_actions: list
 def main() -> None:
     model_path = Path("models/tetris_value_best.keras")
     if not model_path.exists():
-        raise FileNotFoundError("models/tetris_value_best.keras not found")
+        model_path = Path("models/tetris_value_latest.keras")
+    if not model_path.exists():
+        raise FileNotFoundError("No saved model found at models/tetris_value_best.keras or models/tetris_value_latest.keras")
 
     model = keras.models.load_model(model_path)
-    env = TetrisEnv(seed=123)
+    print(f"Loaded model: {model_path}")
 
+    env = TetrisEnv(seed=123)
     state = env.reset(seed=123)
     done = False
 

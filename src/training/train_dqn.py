@@ -7,6 +7,7 @@ import random
 
 import numpy as np
 import tensorflow as tf
+from tensorflow import keras
 
 from src.env.tetris_env import TetrisEnv
 from src.training.features import make_feature_vector
@@ -71,6 +72,12 @@ def train_batch(
 
 
 def main() -> None:
+    # Easy continued-training config block.
+    resume_training = True
+    starting_epsilon = 0.2
+    epsilon_min = 0.02
+    epsilon_decay = 0.997
+
     seed = 42
     random.seed(seed)
     np.random.seed(seed)
@@ -79,27 +86,36 @@ def main() -> None:
     episodes = 1000
     batch_size = 64
     gamma = 0.99
-    epsilon = 1.0
-    epsilon_min = 0.05
-    epsilon_decay = 0.995
+    epsilon = starting_epsilon
     target_sync_every = 10
     max_steps_per_episode = 500
 
+    model_dir = Path("models")
+    model_dir.mkdir(parents=True, exist_ok=True)
+    best_checkpoint_path = model_dir / "tetris_value_best.keras"
+
     env = TetrisEnv(seed=seed)
-    model = build_value_model(input_dim=220)
+
+    if resume_training and best_checkpoint_path.exists():
+        model = keras.models.load_model(best_checkpoint_path)
+        print(f"Loaded checkpoint for continued training: {best_checkpoint_path}")
+    else:
+        model = build_value_model(input_dim=220)
+        if resume_training:
+            print(f"No checkpoint found at {best_checkpoint_path}. Starting fresh model.")
+
     target_model = build_value_model(input_dim=220)
     target_model.set_weights(model.get_weights())
 
     replay_buffer: deque[ReplayTransition] = deque(maxlen=20_000)
     reward_history: list[float] = []
     lines_history: list[int] = []
+    steps_history: list[int] = []
 
     best_avg10_reward = float("-inf")
     best_avg10_lines = float("-inf")
+    best_lines_single_episode = 0
     best_episode_stats: dict[str, float | int | str] = {}
-
-    model_dir = Path("models")
-    model_dir.mkdir(parents=True, exist_ok=True)
 
     for episode in range(1, episodes + 1):
         env.reset(seed=seed + episode)
@@ -151,8 +167,12 @@ def main() -> None:
 
         reward_history.append(total_reward)
         lines_history.append(total_lines_cleared)
+        steps_history.append(steps_survived)
+
         avg10_reward = float(np.mean(reward_history[-10:]))
         avg10_lines = float(np.mean(lines_history[-10:]))
+        avg10_steps = float(np.mean(steps_history[-10:]))
+        best_lines_single_episode = max(best_lines_single_episode, total_lines_cleared)
 
         epsilon = max(epsilon_min, epsilon * epsilon_decay)
 
@@ -164,7 +184,7 @@ def main() -> None:
 
         if avg10_reward > best_avg10_reward:
             best_avg10_reward = avg10_reward
-            model.save(model_dir / "tetris_value_best.keras")
+            model.save(best_checkpoint_path)
             best_episode_stats = {
                 "episode": episode,
                 "reward": total_reward,
@@ -175,6 +195,9 @@ def main() -> None:
                 "bumpiness": episode_bumpiness,
                 "avg10_reward": avg10_reward,
                 "avg10_lines": avg10_lines,
+                "avg10_steps": avg10_steps,
+                "best_lines_single_episode": best_lines_single_episode,
+                "epsilon": epsilon,
                 "end_reason": end_reason,
             }
 
@@ -184,9 +207,11 @@ def main() -> None:
 
         print(
             f"Episode {episode}/{episodes} | reward={total_reward:.2f} | epsilon={epsilon:.3f} "
-            f"| steps={steps_survived} | total_lines={total_lines_cleared} | max_height={episode_max_height:.1f} "
-            f"| holes={episode_holes:.1f} | bumpiness={episode_bumpiness:.1f} "
-            f"| avg10_reward={avg10_reward:.2f} | avg10_lines={avg10_lines:.2f} | end={end_reason}"
+            f"| steps={steps_survived} | total_lines={total_lines_cleared} "
+            f"| avg10_reward={avg10_reward:.2f} | avg10_lines={avg10_lines:.2f} | avg10_steps={avg10_steps:.2f} "
+            f"| best_lines_single={best_lines_single_episode} "
+            f"| max_height={episode_max_height:.1f} | holes={episode_holes:.1f} | bumpiness={episode_bumpiness:.1f} "
+            f"| end={end_reason}"
         )
 
     model.save(model_dir / "tetris_value_final.keras")
