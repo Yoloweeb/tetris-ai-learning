@@ -1,0 +1,4 @@
+numpy
+tensorflow
+pytest
+pygame # optional: visual AI playback
