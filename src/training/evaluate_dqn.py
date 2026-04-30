@@ -34,12 +34,17 @@ def choose_greedy_action(model: keras.Model, env: TetrisEnv, valid_actions: list
 
 
 def main() -> None:
-    episodes = 50
+    episodes = 100
     max_steps_per_episode = 500
 
-    model_path = Path("models/tetris_value_best.keras")
-    if not model_path.exists():
-        raise FileNotFoundError("models/tetris_value_best.keras not found")
+    model_candidates = [
+        Path("models/tetris_value_best_lines.keras"),
+        Path("models/tetris_value_best.keras"),
+        Path("models/tetris_value_latest.keras"),
+    ]
+    model_path = next((path for path in model_candidates if path.exists()), None)
+    if model_path is None:
+        raise FileNotFoundError("No model found at best_lines, best, or latest checkpoints")
 
     model = keras.models.load_model(model_path)
     env = TetrisEnv(seed=777)

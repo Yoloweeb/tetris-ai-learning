@@ -16,33 +16,61 @@ from src.training.model import build_value_model
 ReplayTransition = tuple[np.ndarray, float, list[np.ndarray], bool]
 
 
-def build_candidates(env: TetrisEnv, actions: list[int]) -> list[tuple[int, np.ndarray]]:
-    candidates: list[tuple[int, np.ndarray]] = []
+def build_candidates(env: TetrisEnv, actions: list[int], lookahead: bool = False, model=None) -> list[tuple[int, np.ndarray, float]]:
+    candidates: list[tuple[int, np.ndarray, float]] = []
     for action in actions:
         simulation = env.simulate_action(action)
         if simulation is None:
             continue
         simulated_state, feature_dict = simulation
         feature_vector = make_feature_vector(simulated_state, feature_dict)
-        candidates.append((int(action), feature_vector))
+        combined_value = 0.0
+        if lookahead and model is not None:
+            next_actions = env.get_valid_actions_from_state(simulated_state["board_raw"], int(simulated_state["current_piece"]))
+            next_feature_vectors: list[np.ndarray] = []
+            for next_action in next_actions:
+                next_rotation = int(next_action) // env.board_width
+                next_x = int(next_action) % env.board_width
+                next_shape = env._get_shape_from_action_rotation(int(simulated_state["current_piece"]), next_rotation)
+                next_board = np.array(simulated_state["board_raw"], copy=True)
+                next_drop_y = env._find_drop_position(next_board, next_shape, next_x)
+                if next_drop_y is None:
+                    continue
+                env._place_shape(next_board, next_shape, next_drop_y, next_x, int(simulated_state["current_piece"]) + 1)
+                next_lines = env._clear_lines(next_board)
+                next_binary = (next_board > 0).astype(np.int8)
+                next_features = env.extract_board_features(next_binary)
+                next_features["completed_lines"] = float(next_lines)
+                next_features["landing_height"] = float(env._landing_height(next_shape, next_drop_y))
+                next_features["eroded_piece_cells"] = float(next_lines * int(np.sum(next_shape > 0)))
+                next_state = {"board": next_binary, "current_piece": int(simulated_state["next_piece"]), "next_piece": int(simulated_state["next_piece"])}
+                next_feature_vectors.append(make_feature_vector(next_state, next_features))
+            if next_feature_vectors:
+                next_values = model.predict(np.array(next_feature_vectors, dtype=np.float32), verbose=0).reshape(-1)
+                combined_value = float(np.max(next_values))
+        candidates.append((int(action), feature_vector, combined_value))
     return candidates
 
 
 def choose_action(
     model,
-    candidates: list[tuple[int, np.ndarray]],
+    candidates: list[tuple[int, np.ndarray, float]],
     epsilon: float,
 ) -> tuple[int, np.ndarray]:
     if not candidates:
-        return 0, np.zeros(220, dtype=np.float32)
+        return 0, np.zeros(224, dtype=np.float32)
 
     if random.random() < epsilon:
-        return random.choice(candidates)
+        action, features, _ = random.choice(candidates)
+        return action, features
 
     features = np.array([candidate[1] for candidate in candidates], dtype=np.float32)
     values = model.predict(features, verbose=0).reshape(-1)
-    best_index = int(np.argmax(values))
-    return candidates[best_index]
+    lookahead_values = np.array([candidate[2] for candidate in candidates], dtype=np.float32)
+    scores = values + 0.5 * lookahead_values
+    best_index = int(np.argmax(scores))
+    best_action, best_features, _ = candidates[best_index]
+    return best_action, best_features
 
 
 def train_batch(
@@ -74,16 +102,16 @@ def train_batch(
 def main() -> None:
     # Easy continued-training config block.
     resume_training = True
-    starting_epsilon = 0.2
-    epsilon_min = 0.02
-    epsilon_decay = 0.997
+    starting_epsilon = 0.15
+    epsilon_min = 0.01
+    epsilon_decay = 0.998
 
     seed = 42
     random.seed(seed)
     np.random.seed(seed)
     tf.random.set_seed(seed)
 
-    episodes = 1000
+    episodes = 3000
     batch_size = 64
     gamma = 0.99
     epsilon = starting_epsilon
@@ -93,18 +121,28 @@ def main() -> None:
     model_dir = Path("models")
     model_dir.mkdir(parents=True, exist_ok=True)
     best_checkpoint_path = model_dir / "tetris_value_best.keras"
+    best_lines_checkpoint_path = model_dir / "tetris_value_best_lines.keras"
+    latest_checkpoint_path = model_dir / "tetris_value_latest.keras"
 
     env = TetrisEnv(seed=seed)
 
-    if resume_training and best_checkpoint_path.exists():
-        model = keras.models.load_model(best_checkpoint_path)
-        print(f"Loaded checkpoint for continued training: {best_checkpoint_path}")
-    else:
-        model = build_value_model(input_dim=220)
-        if resume_training:
-            print(f"No checkpoint found at {best_checkpoint_path}. Starting fresh model.")
+    resume_candidates = [best_lines_checkpoint_path, best_checkpoint_path, latest_checkpoint_path]
+    resume_path = next((p for p in resume_candidates if p.exists()), None)
 
-    target_model = build_value_model(input_dim=220)
+    if resume_training and resume_path is not None:
+        loaded_model = keras.models.load_model(resume_path)
+        if int(loaded_model.input_shape[-1]) == 224:
+            model = loaded_model
+            print(f"Loaded checkpoint for continued training: {resume_path}")
+        else:
+            model = build_value_model(input_dim=224)
+            print(f"Checkpoint {resume_path} has incompatible input dim. Starting fresh model.")
+    else:
+        model = build_value_model(input_dim=224)
+        if resume_training:
+            print("No checkpoint found in preferred resume list. Starting fresh model.")
+
+    target_model = build_value_model(input_dim=224)
     target_model.set_weights(model.get_weights())
 
     replay_buffer: deque[ReplayTransition] = deque(maxlen=20_000)
@@ -136,7 +174,7 @@ def main() -> None:
                 end_reason = "no_valid_actions"
                 break
 
-            candidates = build_candidates(env, valid_actions)
+            candidates = build_candidates(env, valid_actions, lookahead=True, model=model)
             if not candidates:
                 done = True
                 end_reason = "no_candidates"
@@ -149,7 +187,7 @@ def main() -> None:
                 next_candidate_features: list[np.ndarray] = []
             else:
                 next_actions = env.get_valid_actions()
-                next_candidates = build_candidates(env, next_actions)
+                next_candidates = build_candidates(env, next_actions, lookahead=False, model=None)
                 next_candidate_features = [candidate[1] for candidate in next_candidates]
 
             replay_buffer.append((selected_features, float(reward), next_candidate_features, bool(done)))
@@ -180,7 +218,7 @@ def main() -> None:
             target_model.set_weights(model.get_weights())
 
         if episode % 25 == 0:
-            model.save(model_dir / "tetris_value_latest.keras")
+            model.save(latest_checkpoint_path)
 
         if avg10_reward > best_avg10_reward:
             best_avg10_reward = avg10_reward
@@ -203,7 +241,7 @@ def main() -> None:
 
         if avg10_lines > best_avg10_lines:
             best_avg10_lines = avg10_lines
-            model.save(model_dir / "tetris_value_best_lines.keras")
+            model.save(best_lines_checkpoint_path)
 
         print(
             f"Episode {episode}/{episodes} | reward={total_reward:.2f} | epsilon={epsilon:.3f} "
@@ -215,7 +253,7 @@ def main() -> None:
         )
 
     model.save(model_dir / "tetris_value_final.keras")
-    model.save(model_dir / "tetris_value_latest.keras")
+    model.save(latest_checkpoint_path)
 
     summary_path = model_dir / "tetris_value_best_summary.json"
     with summary_path.open("w", encoding="utf-8") as f:
