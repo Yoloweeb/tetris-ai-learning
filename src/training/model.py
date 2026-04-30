@@ -3,7 +3,7 @@ from __future__ import annotations
 from tensorflow import keras
 
 
-def build_value_model(input_dim: int = 220) -> keras.Model:
+def build_value_model(input_dim: int = 224) -> keras.Model:
     inputs = keras.layers.Input(shape=(input_dim,), name="state_features")
     x = keras.layers.Dense(256, activation="relu")(inputs)
     x = keras.layers.Dense(128, activation="relu")(x)

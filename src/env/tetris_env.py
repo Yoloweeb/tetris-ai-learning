@@ -126,6 +126,8 @@ class TetrisEnv:
         binary_board = (board_copy > 0).astype(np.int8)
         features = self.extract_board_features(binary_board)
         features["completed_lines"] = float(lines_cleared)
+        features["landing_height"] = float(self._landing_height(shape, drop_y))
+        features["eroded_piece_cells"] = float(lines_cleared * int(np.sum(shape > 0)))
 
         simulated_state: dict[str, Any] = {
             "board": binary_board,
@@ -145,6 +147,10 @@ class TetrisEnv:
             "bumpiness": float(self._compute_bumpiness(heights)),
             "completed_lines": float(np.sum(np.all(board_int > 0, axis=1))),
             "well_sum": float(self._well_sum(heights)),
+            "row_transitions": float(self._row_transitions(board_int)),
+            "column_transitions": float(self._column_transitions(board_int)),
+            "landing_height": 0.0,
+            "eroded_piece_cells": 0.0,
         }
 
     def _get_state(self) -> dict[str, Any]:
@@ -244,6 +250,36 @@ class TetrisEnv:
             depth = max(0, int(min_neighbor - heights[col]))
             total += depth
         return int(total)
+
+    def _row_transitions(self, board: np.ndarray) -> int:
+        transitions = 0
+        for r in range(self.board_height):
+            prev_filled = 1
+            for c in range(self.board_width):
+                filled = 1 if board[r, c] > 0 else 0
+                if filled != prev_filled:
+                    transitions += 1
+                prev_filled = filled
+            if prev_filled == 0:
+                transitions += 1
+        return int(transitions)
+
+    def _column_transitions(self, board: np.ndarray) -> int:
+        transitions = 0
+        for c in range(self.board_width):
+            prev_filled = 1
+            for r in range(self.board_height):
+                filled = 1 if board[r, c] > 0 else 0
+                if filled != prev_filled:
+                    transitions += 1
+                prev_filled = filled
+            if prev_filled == 0:
+                transitions += 1
+        return int(transitions)
+
+    def _landing_height(self, shape: np.ndarray, drop_y: int) -> float:
+        shape_h = shape.shape[0]
+        return float(self.board_height - (drop_y + (shape_h / 2.0)))
 
     def _sample_hypothetical_next_piece(self) -> int:
         bit_generator = np.random.PCG64()
