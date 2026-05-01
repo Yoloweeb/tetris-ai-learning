@@ -178,3 +178,10 @@ Instead of asking **“which action should I take?”**, the AI asks:
 **“Which possible placement leads to the best board state?”**
 
 This makes the learning problem much more suitable for Tetris.
+
+## Demo
+
+https://github.com/user-attachments/assets/02fb39a1-f426-4460-aece-1358680bb6ea
+
+
+
