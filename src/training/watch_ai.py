@@ -11,6 +11,7 @@ from src.training.features import make_feature_vector
 
 
 def choose_greedy_action(model: keras.Model, env: TetrisEnv, valid_actions: list[int]) -> tuple[int, float]:
+    # Score all legal moves and pick the best one for playback.
     if not valid_actions:
         return 0, 0.0
 
@@ -35,6 +36,7 @@ def choose_greedy_action(model: keras.Model, env: TetrisEnv, valid_actions: list
 
 
 def load_best_model() -> tuple[keras.Model, Path]:
+    # Prefer strongest checkpoints first, then fall back to latest.
     model_candidates = [
         Path("models/tetris_value_best_lines.keras"),
         Path("models/tetris_value_best.keras"),
@@ -50,6 +52,7 @@ def load_best_model() -> tuple[keras.Model, Path]:
 
 
 def parse_args() -> argparse.Namespace:
+    # Parse playback controls for reproducible demos.
     parser = argparse.ArgumentParser(description="Watch trained Tetris AI in a pygame window.")
     parser.add_argument("--seed", type=int, default=123, help="Environment seed.")
     parser.add_argument("--fps", type=float, default=7.0, help="Moves per second for playback speed.")
@@ -59,6 +62,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    # --- Runtime setup ---
     try:
         import pygame
     except ImportError as exc:
@@ -100,6 +104,7 @@ def main() -> None:
 
     total_reward_all = 0.0
 
+    # --- Visual playback loop ---
     for episode in range(1, int(args.episodes) + 1):
         state = env.reset(seed=int(args.seed) + episode - 1)
         done = False

@@ -4,6 +4,7 @@ from tensorflow import keras
 
 
 def build_value_model(input_dim: int = 224) -> keras.Model:
+    # Build a simple MLP that predicts value for a candidate board state.
     inputs = keras.layers.Input(shape=(input_dim,), name="state_features")
     x = keras.layers.Dense(256, activation="relu")(inputs)
     x = keras.layers.Dense(128, activation="relu")(x)

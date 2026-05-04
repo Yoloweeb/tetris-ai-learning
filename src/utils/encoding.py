@@ -10,6 +10,7 @@ PIECE_TO_INDEX = {name: idx for idx, name in enumerate(PIECE_NAMES)}
 
 
 def _piece_index(piece: Optional[object]) -> Optional[int]:
+    # Accept either index or piece letter to keep caller APIs flexible.
     if piece is None:
         return None
     if isinstance(piece, (int, np.integer)):
@@ -20,6 +21,7 @@ def _piece_index(piece: Optional[object]) -> Optional[int]:
 
 
 def _one_hot(index: Optional[int], size: int = 7) -> np.ndarray:
+    # Convert an index into a fixed-size indicator vector.
     vec = np.zeros(size, dtype=np.int8)
     if index is None:
         return vec
@@ -33,6 +35,7 @@ def encode_state(
     current_piece: object,
     next_piece: Optional[object],
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    # Validate and encode raw environment state for downstream models.
     board_array = np.asarray(board, dtype=np.int8)
     if board_array.shape != (20, 10):
         raise ValueError(f"Board must be shape (20, 10); got {board_array.shape}")

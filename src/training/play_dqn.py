@@ -10,10 +10,12 @@ from src.training.features import make_feature_vector
 
 
 def board_to_text(board: np.ndarray) -> str:
+    # Render board cells as ASCII for quick terminal playback.
     return "\n".join("".join("#" if cell > 0 else "." for cell in row) for row in board)
 
 
 def choose_greedy_action(model: keras.Model, env: TetrisEnv, valid_actions: list[int]) -> tuple[int, float]:
+    # Return best action plus its predicted value for logging.
     if not valid_actions:
         return 0, 0.0
 
@@ -38,6 +40,7 @@ def choose_greedy_action(model: keras.Model, env: TetrisEnv, valid_actions: list
 
 
 def main() -> None:
+    # Load best available checkpoint for text-based gameplay preview.
     model_path = Path("models/tetris_value_best.keras")
     if not model_path.exists():
         model_path = Path("models/tetris_value_latest.keras")
