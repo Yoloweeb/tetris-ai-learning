@@ -17,6 +17,7 @@ ReplayTransition = tuple[np.ndarray, float, list[np.ndarray], bool]
 
 
 def build_candidates(env: TetrisEnv, actions: list[int], lookahead: bool = False, model=None) -> list[tuple[int, np.ndarray, float]]:
+    # Build model-ready features for each legal action candidate.
     candidates: list[tuple[int, np.ndarray, float]] = []
     for action in actions:
         simulation = env.simulate_action(action)
@@ -26,6 +27,7 @@ def build_candidates(env: TetrisEnv, actions: list[int], lookahead: bool = False
         feature_vector = make_feature_vector(simulated_state, feature_dict)
         combined_value = 0.0
         if lookahead and model is not None:
+            # Estimate one extra step so action ranking is less myopic.
             next_actions = env.get_valid_actions_from_state(simulated_state["board_raw"], int(simulated_state["current_piece"]))
             next_feature_vectors: list[np.ndarray] = []
             for next_action in next_actions:
@@ -57,6 +59,7 @@ def choose_action(
     candidates: list[tuple[int, np.ndarray, float]],
     epsilon: float,
 ) -> tuple[int, np.ndarray]:
+    # Pick epsilon-greedy action using value + lookahead score.
     if not candidates:
         return 0, np.zeros(224, dtype=np.float32)
 
@@ -80,6 +83,7 @@ def train_batch(
     batch_size: int,
     gamma: float,
 ) -> None:
+    # Fit one TD batch sampled from replay memory.
     if len(replay_buffer) < batch_size:
         return
 
@@ -100,6 +104,7 @@ def train_batch(
 
 
 def main() -> None:
+    # --- Training configuration ---
     # Easy continued-training config block.
     resume_training = True
     starting_epsilon = 0.15
@@ -124,6 +129,7 @@ def main() -> None:
     best_lines_checkpoint_path = model_dir / "tetris_value_best_lines.keras"
     latest_checkpoint_path = model_dir / "tetris_value_latest.keras"
 
+    # --- Model setup ---
     env = TetrisEnv(seed=seed)
 
     resume_candidates = [best_lines_checkpoint_path, best_checkpoint_path, latest_checkpoint_path]
@@ -155,6 +161,7 @@ def main() -> None:
     best_lines_single_episode = 0
     best_episode_stats: dict[str, float | int | str] = {}
 
+    # --- Replay training loop ---
     for episode in range(1, episodes + 1):
         env.reset(seed=seed + episode)
 
@@ -190,6 +197,7 @@ def main() -> None:
                 next_candidates = build_candidates(env, next_actions, lookahead=False, model=None)
                 next_candidate_features = [candidate[1] for candidate in next_candidates]
 
+            # Store transition with all legal next-state options.
             replay_buffer.append((selected_features, float(reward), next_candidate_features, bool(done)))
             train_batch(model, target_model, replay_buffer, batch_size, gamma)
 

@@ -6,6 +6,7 @@ import numpy as np
 
 
 def piece_to_one_hot(piece_id: int) -> np.ndarray:
+    # Encode piece id so the model can distinguish tetromino types.
     one_hot = np.zeros(7, dtype=np.float32)
     if 0 <= int(piece_id) < 7:
         one_hot[int(piece_id)] = 1.0
@@ -13,11 +14,13 @@ def piece_to_one_hot(piece_id: int) -> np.ndarray:
 
 
 def make_feature_vector(simulated_state: dict[str, Any], feature_dict: dict[str, float]) -> np.ndarray:
+    # Flatten board and metadata into one fixed-size model input vector.
     board = np.asarray(simulated_state["board"], dtype=np.float32).reshape(-1)
     current_piece = piece_to_one_hot(int(simulated_state["current_piece"]))
     next_piece = piece_to_one_hot(int(simulated_state["next_piece"]))
     scalar_features = np.array(
         [
+            # Normalize handcrafted signals so scales stay model-friendly.
             feature_dict["max_height"] / 20.0,
             feature_dict["aggregate_height"] / 200.0,
             feature_dict["holes"] / 200.0,

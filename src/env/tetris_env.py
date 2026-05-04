@@ -30,6 +30,7 @@ class TetrisEnv:
     _done: bool = field(init=False, default=False, repr=False)
 
     def __post_init__(self) -> None:
+        # Initialize deterministic RNG and empty board storage.
         self._rng = np.random.default_rng(self.seed)
         self._board = np.zeros((self.board_height, self.board_width), dtype=np.int8)
         self._current_piece = 0
@@ -37,6 +38,7 @@ class TetrisEnv:
         self._done = False
 
     def reset(self, seed: int | None = None) -> dict[str, Any]:
+        # Reset board and piece queue for a fresh episode.
         if seed is not None:
             self._rng = np.random.default_rng(seed)
         self._board = np.zeros((self.board_height, self.board_width), dtype=np.int8)
@@ -46,6 +48,7 @@ class TetrisEnv:
         return self._get_state()
 
     def step(self, action: int) -> tuple[dict[str, Any], float, bool, dict[str, Any]]:
+        # Execute one placement and return shaped learning feedback.
         if self._done:
             metrics = self.extract_board_features((self._board > 0).astype(np.int8))
             return self._get_state(), -10.0, True, {"reason": "game_over", **metrics}
@@ -62,6 +65,7 @@ class TetrisEnv:
         self._next_piece = int(self._rng.integers(0, 7))
         self._done = bool(np.any(self._board[0] > 0))
 
+        # Reward schedule strongly favors multi-line clears.
         lines_cleared = int(metrics["completed_lines"])
         line_clear_reward = 0.0
         if lines_cleared == 1:
@@ -73,6 +77,7 @@ class TetrisEnv:
         elif lines_cleared >= 4:
             line_clear_reward = 200.0
 
+        # Penalize unstable boards so the agent avoids risky stacks.
         reward = line_clear_reward
         reward += 0.02
         reward -= 0.005 * float(metrics["max_height"])
@@ -92,11 +97,13 @@ class TetrisEnv:
         return self._get_state(), float(reward), self._done, info
 
     def get_valid_actions(self) -> list[int]:
+        # Return legal actions for the live board state.
         if self._done:
             return []
         return self.get_valid_actions_from_state(self._board, self._current_piece)
 
     def get_valid_actions_from_state(self, board: np.ndarray, current_piece: int) -> list[int]:
+        # Enumerate rotation/column pairs that can be dropped safely.
         board_int = np.asarray(board, dtype=np.int8)
         valid_actions: list[int] = []
         unique_rotations = self._get_unique_rotations(current_piece)
@@ -108,6 +115,7 @@ class TetrisEnv:
         return valid_actions
 
     def simulate_action(self, action: int) -> tuple[dict[str, Any], dict[str, float]] | None:
+        # Preview an action without mutating the real environment state.
         if self._done:
             return None
 
@@ -138,6 +146,7 @@ class TetrisEnv:
         return simulated_state, features
 
     def extract_board_features(self, board: np.ndarray) -> dict[str, float]:
+        # Compute handcrafted board metrics used by reward and value model.
         board_int = np.asarray(board, dtype=np.int8)
         heights = self._column_heights(board_int)
         return {
