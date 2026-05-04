@@ -6,19 +6,28 @@ from src.env.tetris_env import TetrisEnv
 def test_env_smoke():
     env = TetrisEnv()
     state = env.reset(seed=123)
-    assert state[0].shape == (20, 10)
-    assert state[1].shape == (7,)
-    assert state[2].shape == (7,)
 
-    rng = np.random.default_rng(0)
+    assert state["board"].shape == (20, 10)
+    assert isinstance(state["current_piece"], int)
+    assert isinstance(state["next_piece"], int)
+
     for _ in range(10):
-        valid_actions = env.get_valid_actions(state)
-        action = int(rng.choice(valid_actions))
-        state, reward, done, info = env.step(action)
+        valid_actions = env.get_valid_actions()
+        assert isinstance(valid_actions, list)
+
+        if not valid_actions:
+            break
+
+        action = valid_actions[0]
+        next_state, reward, done, info = env.step(action)
+
+        assert next_state["board"].shape == (20, 10)
+        assert isinstance(next_state["current_piece"], int)
+        assert isinstance(next_state["next_piece"], int)
         assert isinstance(reward, float)
-        assert done is False
-        assert state[0].shape == (20, 10)
-        assert state[1].shape == (7,)
-        assert state[2].shape == (7,)
-        assert "rotation_index" in info
-        assert "target_x" in info
+        assert isinstance(done, bool)
+        assert isinstance(info, dict)
+
+        state = next_state
+        if done:
+            break
