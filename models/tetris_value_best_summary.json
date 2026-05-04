@@ -1,0 +1,15 @@
+{
+  "episode": 838,
+  "reward": 269.306,
+  "steps": 72,
+  "lines": 15,
+  "max_height": 20.0,
+  "holes": 46.0,
+  "bumpiness": 7.0,
+  "avg10_reward": 104.0444,
+  "avg10_lines": 6.4,
+  "avg10_steps": 47.6,
+  "best_lines_single_episode": 15,
+  "epsilon": 0.02,
+  "end_reason": "natural"
+}

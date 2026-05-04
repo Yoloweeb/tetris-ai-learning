@@ -10,6 +10,7 @@ from src.training.features import make_feature_vector
 
 
 def choose_greedy_action(model: keras.Model, env: TetrisEnv, valid_actions: list[int]) -> int:
+    # Choose the legal action with the highest predicted value.
     if not valid_actions:
         return 0
 
@@ -34,6 +35,7 @@ def choose_greedy_action(model: keras.Model, env: TetrisEnv, valid_actions: list
 
 
 def main() -> None:
+    # --- Evaluation configuration ---
     episodes = 100
     max_steps_per_episode = 500
 
@@ -53,6 +55,7 @@ def main() -> None:
     lines_cleared_history: list[int] = []
     steps_history: list[int] = []
 
+    # --- Greedy rollout ---
     for episode in range(1, episodes + 1):
         env.reset(seed=777 + episode)
         done = False

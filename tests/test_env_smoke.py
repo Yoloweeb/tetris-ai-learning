@@ -4,6 +4,7 @@ from src.env.tetris_env import TetrisEnv
 
 
 def test_env_smoke():
+    # Verify core step loop returns correctly shaped outputs.
     env = TetrisEnv()
     state = env.reset(seed=123)
 
